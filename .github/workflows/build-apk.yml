@@ -16,10 +16,11 @@ jobs:
           sudo apt update
           sudo apt install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
 
-      - name: Install Buildozer
+            - name: Install Buildozer
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install "cython==0.29.34" buildozer
+          python3 -m pip install "buildozer==1.5.0"
+          python3 -m pip install "cython==0.29.34"
 
       - name: Build APK
         run: |
