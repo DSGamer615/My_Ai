@@ -7,7 +7,7 @@ version = 0.1.0
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
-requirements = python3,kivy
+requirements = python3,kivy,charset-normalizer==3.4.1
 
 orientation = portrait
 
