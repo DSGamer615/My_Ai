@@ -9,6 +9,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 
 requirements = python3,kivy,pyjnius
+android.permissions = RECORD_AUDIO
 
 orientation = portrait
 
