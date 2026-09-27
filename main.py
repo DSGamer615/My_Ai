@@ -355,11 +355,8 @@ class MyAIApp(App):
                 "model"
             )
 
-            if not os.path.exists(model_path):
-                self.output.text = "Vosk model not found."
-                return
-
             self.vosk_model = Model(model_path)
+
             self.output.text = "Offline voice ready."
 
         except Exception as e:
