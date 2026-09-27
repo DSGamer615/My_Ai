@@ -11,6 +11,12 @@ from kivy.metrics import dp
 
 from ai_brain import AIBrain
 
+import json
+import os
+import shutil
+
+from kivy.clock import Clock
+
 
 class Card(BoxLayout):
 
