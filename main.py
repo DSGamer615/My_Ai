@@ -48,6 +48,12 @@ class MyAIApp(App):
 
         self.brain = AIBrain()
 
+        self.brain = AIBrain()
+
+        self.vosk_model = None
+        self.vosk_recognizer = None
+        self.vosk_speech_service = None
+
         # Android speech recognition callback
         try:
             from jnius import autoclass
