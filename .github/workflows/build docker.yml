@@ -1,0 +1,27 @@
+name: Build My AI APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build APK with Buildozer Docker
+        run: |
+          docker pull kivy/buildozer:latest
+
+          docker run --rm \
+            -v "$PWD":/home/user/hostcwd \
+            kivy/buildozer:latest \
+            android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyAI-APK
+          path: bin/*.apk
