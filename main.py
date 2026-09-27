@@ -8,6 +8,7 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.graphics import Color, RoundedRectangle
 from kivy.metrics import dp
+from kivy.clock import mainthread
 
 from ai_brain import AIBrain
 
@@ -487,3 +488,44 @@ class MyAIApp(App):
 
 
 MyAIApp().run()
+
+def start_voice(self, instance):
+
+    try:
+        from jnius import autoclass
+
+        PythonActivity = autoclass(
+            "org.kivy.android.PythonActivity"
+        )
+        Intent = autoclass(
+            "android.content.Intent"
+        )
+        RecognizerIntent = autoclass(
+            "android.speech.RecognizerIntent"
+        )
+
+        intent = Intent(
+            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+        )
+
+        intent.putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+        )
+
+        intent.putExtra(
+            RecognizerIntent.EXTRA_MAX_RESULTS,
+            1
+        )
+
+        self.output.text = "Listening..."
+
+        activity = PythonActivity.mActivity
+
+        activity.startActivityForResult(
+            intent,
+            1001
+        )
+
+    except Exception as e:
+        self.output.text = "Voice input unavailable."
