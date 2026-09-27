@@ -344,23 +344,35 @@ class MyAIApp(App):
 
         return root
 
-    def load_vosk_model(self):
+        def load_vosk_model(self):
         try:
             from jnius import autoclass
 
-            Model = autoclass("org.vosk.Model")
-
-            model_path = os.path.join(
-                self.user_data_dir,
-                "model"
+            StorageService = autoclass(
+                "org.vosk.android.StorageService"
             )
 
-            self.vosk_model = Model(model_path)
+            self.output.text = "Loading offline voice model..."
 
-            self.output.text = "Offline voice ready."
+            StorageService.unpack(
+                autoclass(
+                    "org.kivy.android.PythonActivity"
+                ).mActivity,
+                "model",
+                "model",
+                self.on_vosk_model_loaded,
+                self.on_vosk_model_error
+            )
 
-        except Exception as e:
-            self.output.text = "Vosk initialization failed."
+        except Exception:
+            self.output.text = "Vosk model loading failed."
+
+           def on_vosk_model_loaded(self, model):
+        self.vosk_model = model
+        self.output.text = "Offline voice ready."
+
+    def on_vosk_model_error(self, exception):
+        self.output.text = "Vosk model error."
 
     # =========================
     # INFORMATION CARD
