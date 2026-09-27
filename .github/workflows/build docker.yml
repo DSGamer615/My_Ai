@@ -11,6 +11,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Download Vosk English model
+        run: |
+          wget https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip
+          unzip vosk-model-small-en-in-0.4.zip
+          mv vosk-model-small-en-in-0.4 model
+
       - name: Build APK with Buildozer Docker
         run: |
           docker pull kivy/buildozer:latest
