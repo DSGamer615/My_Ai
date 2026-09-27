@@ -7,10 +7,13 @@ version = 0.1.0
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
-requirements = python3==3.10.11,hostpython3==3.10.11,kivy
+
+requirements = python3,kivy
 
 orientation = portrait
 
 android.api = 33
 android.minapi = 24
 android.accept_sdk_license = True
+
+p4a.branch = develop
