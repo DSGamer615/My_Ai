@@ -6,7 +6,7 @@ package.domain = org.myai
 version = 0.1.0
 
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas
+source.include_exts = py,png,jpg,kv,atlas,conf,bin,mdl,fst,txt
 
 requirements = python3,kivy,pyjnius,vosk
 android.permissions = RECORD_AUDIO
