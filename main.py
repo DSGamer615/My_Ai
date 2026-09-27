@@ -344,6 +344,27 @@ class MyAIApp(App):
 
         return root
 
+    def load_vosk_model(self):
+        try:
+            from jnius import autoclass
+
+            Model = autoclass("org.vosk.Model")
+
+            model_path = os.path.join(
+                self.user_data_dir,
+                "model"
+            )
+
+            if not os.path.exists(model_path):
+                self.output.text = "Vosk model not found."
+                return
+
+            self.vosk_model = Model(model_path)
+            self.output.text = "Offline voice ready."
+
+        except Exception as e:
+            self.output.text = "Vosk initialization failed."
+
     # =========================
     # INFORMATION CARD
     # =========================
