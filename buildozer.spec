@@ -8,7 +8,7 @@ version = 0.1.0
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 
-requirements = python3,kivy,pyjnius
+requirements = python3,kivy,pyjnius,vosk
 android.permissions = RECORD_AUDIO
 
 orientation = portrait
