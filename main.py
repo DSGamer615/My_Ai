@@ -1,4 +1,4 @@
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -8,6 +8,7 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.graphics import Color, RoundedRectangle
 from kivy.metrics import dp
+from kivy.clock import Clock
 
 from ai_brain import AIBrain
 
@@ -46,30 +47,11 @@ class MyAIApp(App):
         self.vosk_recognizer = None
         self.vosk_speech_service = None
 
-        # Android speech recognition callback
-        try:
-            from jnius import autoclass
-
-            PythonActivity = autoclass(
-                "org.kivy.android.PythonActivity"
-            )
-
-            PythonActivity.bind(
-                on_activity_result=self.on_activity_result
-            )
-
-        except Exception:
-            pass
-
         root = BoxLayout(
             orientation="vertical",
             padding=dp(12),
             spacing=dp(10)
         )
-
-        # =========================
-        # BACKGROUND
-        # =========================
 
         with root.canvas.before:
             Color(0.008, 0.025, 0.05, 1)
@@ -203,7 +185,7 @@ class MyAIApp(App):
         info.add_widget(
             self.make_info_card(
                 "VOICE",
-                "● READY"
+                "● VOSK"
             )
         )
 
@@ -219,7 +201,7 @@ class MyAIApp(App):
         )
 
         self.output = Label(
-            text="Welcome, operator.\nMy AI is ready.",
+            text="Welcome, operator.\nLoading offline voice...",
             font_size=dp(17),
             halign="center",
             valign="middle",
@@ -337,6 +319,12 @@ class MyAIApp(App):
 
         root.add_widget(buttons)
 
+        # Load model after UI exists
+        Clock.schedule_once(
+            lambda dt: self.load_vosk_model(),
+            0.5
+        )
+
         return root
 
     # =========================
@@ -358,7 +346,7 @@ class MyAIApp(App):
             )
 
             self.output.text = (
-                "Loading offline voice model..."
+                "Loading offline Vosk model..."
             )
 
             StorageService.unpack(
@@ -369,10 +357,11 @@ class MyAIApp(App):
                 self.on_vosk_model_error
             )
 
-        except Exception:
+        except Exception as e:
 
             self.output.text = (
-                "Vosk model loading failed."
+                "Vosk loading failed:\n"
+                + str(e)
             )
 
     def on_vosk_model_loaded(self, model):
@@ -380,13 +369,15 @@ class MyAIApp(App):
         self.vosk_model = model
 
         self.output.text = (
-            "Offline voice ready."
+            "Offline Vosk ready.\n"
+            "Press VOICE."
         )
 
     def on_vosk_model_error(self, exception):
 
         self.output.text = (
-            "Vosk model error."
+            "Vosk model error:\n"
+            + str(exception)
         )
 
     # =========================
@@ -468,7 +459,6 @@ class MyAIApp(App):
 
         response = self.brain.think(command)
 
-        # Android action
         if response.startswith("EXECUTE:"):
 
             action = response.replace(
@@ -489,10 +479,25 @@ class MyAIApp(App):
         self.input_box.text = ""
 
     # =========================
-    # VOICE INPUT
+    # VOSK VOICE INPUT
     # =========================
 
     def start_voice(self, instance):
+
+        # Stop if already listening
+        if self.vosk_speech_service is not None:
+
+            self.stop_voice()
+
+            return
+
+        if self.vosk_model is None:
+
+            self.output.text = (
+                "Vosk model is not ready yet."
+            )
+
+            return
 
         try:
 
@@ -506,104 +511,200 @@ class MyAIApp(App):
             ])
 
         except Exception:
+
             pass
 
         try:
 
             from jnius import autoclass
 
-            Intent = autoclass(
-                "android.content.Intent"
+            Recognizer = autoclass(
+                "org.vosk.Recognizer"
             )
 
-            RecognizerIntent = autoclass(
-                "android.speech.RecognizerIntent"
+            SpeechService = autoclass(
+                "org.vosk.android.SpeechService"
             )
 
-            PythonActivity = autoclass(
-                "org.kivy.android.PythonActivity"
+            RecognitionListener = autoclass(
+                "org.vosk.android.RecognitionListener"
             )
 
-            intent = Intent(
-                RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+            self.vosk_recognizer = Recognizer(
+                self.vosk_model,
+                16000.0
             )
 
-            intent.putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            self.vosk_speech_service = SpeechService(
+                self.vosk_recognizer,
+                16000.0
             )
 
-            intent.putExtra(
-                RecognizerIntent.EXTRA_MAX_RESULTS,
-                1
+            self.vosk_listener = RecognitionListener.implement(
+                {
+                    "onPartialResult":
+                        self.on_vosk_partial,
+
+                    "onResult":
+                        self.on_vosk_result,
+
+                    "onFinalResult":
+                        self.on_vosk_final,
+
+                    "onError":
+                        self.on_vosk_error,
+
+                    "onTimeout":
+                        self.on_vosk_timeout
+                }
             )
-
-            self.output.text = "Listening..."
-
-            PythonActivity.mActivity.startActivityForResult(
-                intent,
-                1001
-            )
-
-        except Exception:
 
             self.output.text = (
-                "Voice input unavailable."
+                "Listening offline..."
             )
 
+            self.vosk_speech_service.startListening(
+                self.vosk_listener
+            )
+
+        except Exception as e:
+
+            self.output.text = (
+                "Vosk voice failed:\n"
+                + str(e)
+            )
+
+            self.cleanup_vosk()
+
     # =========================
-    # SPEECH RESULT
+    # VOSK CALLBACKS
     # =========================
 
-    def on_activity_result(
-        self,
-        request_code,
-        result_code,
-        intent
-    ):
-
-        if request_code != 1001:
-            return
+    def on_vosk_partial(self, hypothesis):
 
         try:
 
-            from jnius import autoclass
-
-            Activity = autoclass(
-                "android.app.Activity"
+            self.output.text = (
+                "Listening...\n"
+                + str(hypothesis)
             )
 
-            if result_code != Activity.RESULT_OK:
+        except Exception:
+            pass
 
-                self.output.text = (
-                    "Voice cancelled."
-                )
+    def on_vosk_result(self, hypothesis):
 
-                return
+        try:
 
-            results = intent.getStringArrayListExtra(
-                "android.speech.extra.RESULTS"
+            import json
+
+            data = json.loads(
+                str(hypothesis)
             )
 
-            if results is None or results.size() == 0:
+            text = data.get(
+                "text",
+                ""
+            ).strip()
+
+            if text:
+
+                self.input_box.text = text
+
+        except Exception:
+            pass
+
+    def on_vosk_final(self, hypothesis):
+
+        try:
+
+            import json
+
+            data = json.loads(
+                str(hypothesis)
+            )
+
+            text = data.get(
+                "text",
+                ""
+            ).strip()
+
+            self.cleanup_vosk()
+
+            if text:
+
+                self.input_box.text = text
+
+                self.send_command(None)
+
+            else:
 
                 self.output.text = (
-                    "I couldn't hear you."
+                    "I couldn't understand you."
                 )
 
-                return
+        except Exception as e:
 
-            command = results.get(0)
+            self.cleanup_vosk()
 
-            self.input_box.text = command
+            self.output.text = (
+                "Voice processing error:\n"
+                + str(e)
+            )
 
-            self.send_command(None)
+    def on_vosk_error(self, error):
+
+        self.output.text = (
+            "Vosk microphone error:\n"
+            + str(error)
+        )
+
+        self.cleanup_vosk()
+
+    def on_vosk_timeout(self):
+
+        self.cleanup_vosk()
+
+        self.output.text = (
+            "Listening stopped."
+        )
+
+    # =========================
+    # STOP VOSK
+    # =========================
+
+    def stop_voice(self):
+
+        try:
+
+            if self.vosk_speech_service is not None:
+
+                self.vosk_speech_service.stop()
 
         except Exception:
 
-            self.output.text = (
-                "Could not process voice input."
-            )
+            pass
+
+        self.cleanup_vosk()
+
+        self.output.text = (
+            "Voice stopped."
+        )
+
+    def cleanup_vosk(self):
+
+        try:
+
+            if self.vosk_speech_service is not None:
+
+                self.vosk_speech_service.shutdown()
+
+        except Exception:
+
+            pass
+
+        self.vosk_speech_service = None
+        self.vosk_recognizer = None
 
     # =========================
     # APP LAUNCHER
@@ -684,6 +785,14 @@ class MyAIApp(App):
             )
 
         self.input_box.text = ""
+
+    # =========================
+    # APP SHUTDOWN
+    # =========================
+
+    def on_stop(self):
+
+        self.cleanup_vosk()
 
 
 MyAIApp().run()
