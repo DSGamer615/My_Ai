@@ -346,7 +346,7 @@ class MyAIApp(App):
 
         def load_vosk_model(self):
             try:
-            from jnius import autoclass
+                from jnius import autoclass
 
             StorageService = autoclass(
                 "org.vosk.android.StorageService"
@@ -364,10 +364,10 @@ class MyAIApp(App):
                 self.on_vosk_model_error
             )
 
-        except Exception:
-            self.output.text = "Vosk model loading failed."
+            except Exception:
+        self.output.text = "Vosk model loading failed."
 
-           def on_vosk_model_loaded(self, model):
+    def on_vosk_model_loaded(self, model):
         self.vosk_model = model
         self.output.text = "Offline voice ready."
 
