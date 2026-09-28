@@ -333,52 +333,53 @@ class MyAIApp(App):
 
     def load_vosk_model(self):
 
-        try:
+    try:
 
-            from jnius import autoclass
+        from jnius import autoclass
 
-            StorageService = autoclass(
-                "org.vosk.android.StorageService"
-            )
+        StorageService = autoclass(
+            "org.vosk.android.StorageService"
+        )
 
-            PythonActivity = autoclass(
-                "org.kivy.android.PythonActivity"
-            )
+        PythonActivity = autoclass(
+            "org.kivy.android.PythonActivity"
+        )
 
-            self.output.text = (
-                "Loading offline Vosk model..."
-            )
+        self.output.text = (
+            "Loading Vosk model..."
+        )
 
-            StorageService.unpack(
-                PythonActivity.mActivity,
-                "model",
-                "model",
-                self.on_vosk_model_loaded,
-                self.on_vosk_model_error
-            )
+        StorageService.unpack(
+            PythonActivity.mActivity,
+            "model",
+            "model",
+            self.on_vosk_model_loaded,
+            self.on_vosk_model_error
+        )
 
-        except Exception as e:
+    except Exception as e:
 
-            self.output.text = (
-                "Vosk loading failed:\n"
-                + str(e)
-            )
+        self.output.text = (
+            "VOSK LOAD ERROR:\n"
+            + str(e)
+        )
 
     def on_vosk_model_loaded(self, model):
 
-        self.vosk_model = model
+    self.vosk_model = model
 
-        self.output.text = (
-            "Offline Vosk ready.\n"
-            "Press VOICE."
-        )
+    self.output.text = (
+        "Vosk model loaded successfully.\n"
+        "Press VOICE."
+    )
 
-    def on_vosk_model_error(self, exception):
 
-        self.output.text = (
-            "Vosk model error:\n"
-            + str(exception)
-        )
+def on_vosk_model_error(self, exception):
+
+    self.output.text = (
+        "VOSK MODEL ERROR:\n"
+        + str(exception)
+    )
 
     # =========================
     # INFORMATION CARD
