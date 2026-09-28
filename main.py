@@ -345,7 +345,7 @@ class MyAIApp(App):
         return root
 
         def load_vosk_model(self):
-        try:
+            try:
             from jnius import autoclass
 
             StorageService = autoclass(
