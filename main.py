@@ -11,12 +11,6 @@ from kivy.metrics import dp
 
 from ai_brain import AIBrain
 
-import json
-import os
-import shutil
-
-from kivy.clock import Clock
-
 
 class Card(BoxLayout):
 
@@ -48,8 +42,6 @@ class MyAIApp(App):
 
         self.brain = AIBrain()
 
-        self.brain = AIBrain()
-
         self.vosk_model = None
         self.vosk_recognizer = None
         self.vosk_speech_service = None
@@ -75,7 +67,10 @@ class MyAIApp(App):
             spacing=dp(10)
         )
 
-        # Background
+        # =========================
+        # BACKGROUND
+        # =========================
+
         with root.canvas.before:
             Color(0.008, 0.025, 0.05, 1)
 
@@ -344,40 +339,55 @@ class MyAIApp(App):
 
         return root
 
-        def load_vosk_model(self):
+    # =========================
+    # VOSK MODEL
+    # =========================
 
-    try:
+    def load_vosk_model(self):
 
-        from jnius import autoclass
+        try:
 
-        StorageService = autoclass(
-            "org.vosk.android.StorageService"
-        )
+            from jnius import autoclass
 
-        PythonActivity = autoclass(
-            "org.kivy.android.PythonActivity"
-        )
+            StorageService = autoclass(
+                "org.vosk.android.StorageService"
+            )
 
-        self.output.text = "Loading offline voice model..."
+            PythonActivity = autoclass(
+                "org.kivy.android.PythonActivity"
+            )
 
-        StorageService.unpack(
-            PythonActivity.mActivity,
-            "model",
-            "model",
-            self.on_vosk_model_loaded,
-            self.on_vosk_model_error
-        )
+            self.output.text = (
+                "Loading offline voice model..."
+            )
 
-    except Exception:
+            StorageService.unpack(
+                PythonActivity.mActivity,
+                "model",
+                "model",
+                self.on_vosk_model_loaded,
+                self.on_vosk_model_error
+            )
 
-        self.output.text = "Vosk model loading failed."
+        except Exception:
+
+            self.output.text = (
+                "Vosk model loading failed."
+            )
 
     def on_vosk_model_loaded(self, model):
+
         self.vosk_model = model
-        self.output.text = "Offline voice ready."
+
+        self.output.text = (
+            "Offline voice ready."
+        )
 
     def on_vosk_model_error(self, exception):
-        self.output.text = "Vosk model error."
+
+        self.output.text = (
+            "Vosk model error."
+        )
 
     # =========================
     # INFORMATION CARD
@@ -535,7 +545,7 @@ class MyAIApp(App):
                 1001
             )
 
-        except Exception as e:
+        except Exception:
 
             self.output.text = (
                 "Voice input unavailable."
@@ -564,7 +574,11 @@ class MyAIApp(App):
             )
 
             if result_code != Activity.RESULT_OK:
-                self.output.text = "Voice cancelled."
+
+                self.output.text = (
+                    "Voice cancelled."
+                )
+
                 return
 
             results = intent.getStringArrayListExtra(
@@ -572,7 +586,11 @@ class MyAIApp(App):
             )
 
             if results is None or results.size() == 0:
-                self.output.text = "I couldn't hear you."
+
+                self.output.text = (
+                    "I couldn't hear you."
+                )
+
                 return
 
             command = results.get(0)
@@ -635,6 +653,7 @@ class MyAIApp(App):
                 )
 
                 self.input_box.text = ""
+
                 return
 
             activity = PythonActivity.mActivity
