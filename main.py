@@ -1,4 +1,4 @@
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -12,6 +12,85 @@ from kivy.clock import Clock
 
 from ai_brain import AIBrain
 
+# =========================================================
+# VOSK / PYJNIUS CALLBACK CLASSES
+# =========================================================
+
+try:
+    from jnius import PythonJavaClass, java_method
+except Exception:
+    PythonJavaClass = object
+
+    def java_method(*args, **kwargs):
+        def decorator(function):
+            return function
+        return decorator
+
+
+class VoskModelCallback(PythonJavaClass):
+
+    __javainterfaces__ = [
+        "org/vosk/android/StorageService$Callback"
+    ]
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+    @java_method("(Ljava/lang/Object;)V")
+    def onComplete(self, result):
+        self.app.on_vosk_model_loaded(result)
+
+
+class VoskModelErrorCallback(PythonJavaClass):
+
+    __javainterfaces__ = [
+        "org/vosk/android/StorageService$Callback"
+    ]
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+    @java_method("(Ljava/lang/Object;)V")
+    def onComplete(self, error):
+        self.app.on_vosk_model_error(error)
+
+
+class VoskRecognitionListener(PythonJavaClass):
+
+    __javainterfaces__ = [
+        "org/vosk/android/RecognitionListener"
+    ]
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+    @java_method("(Ljava/lang/String;)V")
+    def onPartialResult(self, hypothesis):
+        self.app.on_vosk_partial(hypothesis)
+
+    @java_method("(Ljava/lang/String;)V")
+    def onResult(self, hypothesis):
+        self.app.on_vosk_result(hypothesis)
+
+    @java_method("(Ljava/lang/String;)V")
+    def onFinalResult(self, hypothesis):
+        self.app.on_vosk_final(hypothesis)
+
+    @java_method("(Ljava/lang/Exception;)V")
+    def onError(self, exception):
+        self.app.on_vosk_error(exception)
+
+    @java_method("()V")
+    def onTimeout(self):
+        self.app.on_vosk_timeout()
+
+
+# =========================================================
+# CARD
+# =========================================================
 
 class Card(BoxLayout):
 
@@ -37,15 +116,25 @@ class Card(BoxLayout):
         self.bg.size = self.size
 
 
+# =========================================================
+# MAIN APP
+# =========================================================
+
 class MyAIApp(App):
 
     def build(self):
 
         self.brain = AIBrain()
 
+        # Vosk objects
         self.vosk_model = None
         self.vosk_recognizer = None
         self.vosk_speech_service = None
+
+        # Keep Java callback objects alive
+        self.vosk_model_callback = None
+        self.vosk_model_error_callback = None
+        self.vosk_listener = None
 
         root = BoxLayout(
             orientation="vertical",
@@ -69,9 +158,9 @@ class MyAIApp(App):
             setattr(self.background, "size", value)
         )
 
-        # =========================
+        # =================================================
         # HEADER
-        # =========================
+        # =================================================
 
         header = BoxLayout(
             orientation="vertical",
@@ -98,9 +187,9 @@ class MyAIApp(App):
 
         root.add_widget(header)
 
-        # =========================
+        # =================================================
         # SYSTEM STATUS
-        # =========================
+        # =================================================
 
         status = Card(
             orientation="horizontal",
@@ -127,9 +216,9 @@ class MyAIApp(App):
 
         root.add_widget(status)
 
-        # =========================
+        # =================================================
         # AI CORE
-        # =========================
+        # =================================================
 
         core = Card(
             orientation="vertical",
@@ -164,9 +253,9 @@ class MyAIApp(App):
 
         root.add_widget(core)
 
-        # =========================
+        # =================================================
         # INFORMATION
-        # =========================
+        # =================================================
 
         info = GridLayout(
             cols=2,
@@ -191,9 +280,9 @@ class MyAIApp(App):
 
         root.add_widget(info)
 
-        # =========================
+        # =================================================
         # RESPONSE
-        # =========================
+        # =================================================
 
         response_card = Card(
             orientation="vertical",
@@ -217,9 +306,9 @@ class MyAIApp(App):
 
         root.add_widget(response_card)
 
-        # =========================
+        # =================================================
         # QUICK COMMANDS
-        # =========================
+        # =================================================
 
         root.add_widget(
             Label(
@@ -256,9 +345,9 @@ class MyAIApp(App):
 
         root.add_widget(commands)
 
-        # =========================
+        # =================================================
         # COMMAND INPUT
-        # =========================
+        # =================================================
 
         self.input_box = TextInput(
             hint_text="Enter command...",
@@ -277,9 +366,9 @@ class MyAIApp(App):
 
         root.add_widget(self.input_box)
 
-        # =========================
+        # =================================================
         # BUTTONS
-        # =========================
+        # =================================================
 
         buttons = GridLayout(
             cols=2,
@@ -319,7 +408,10 @@ class MyAIApp(App):
 
         root.add_widget(buttons)
 
-        # Load model after UI exists
+        # =================================================
+        # LOAD VOSK AFTER UI
+        # =================================================
+
         Clock.schedule_once(
             lambda dt: self.load_vosk_model(),
             0.5
@@ -327,63 +419,81 @@ class MyAIApp(App):
 
         return root
 
-    # =========================
-    # VOSK MODEL
-    # =========================
+    # =====================================================
+    # VOSK MODEL LOADING
+    # =====================================================
 
     def load_vosk_model(self):
 
-    try:
+        try:
 
-        from jnius import autoclass
+            from jnius import autoclass
 
-        StorageService = autoclass(
-            "org.vosk.android.StorageService"
-        )
+            StorageService = autoclass(
+                "org.vosk.android.StorageService"
+            )
 
-        PythonActivity = autoclass(
-            "org.kivy.android.PythonActivity"
-        )
+            PythonActivity = autoclass(
+                "org.kivy.android.PythonActivity"
+            )
 
-        self.output.text = (
-            "Loading Vosk model..."
-        )
+            self.output.text = (
+                "Loading Vosk model..."
+            )
 
-        StorageService.unpack(
-            PythonActivity.mActivity,
-            "model",
-            "model",
-            self.on_vosk_model_loaded,
-            self.on_vosk_model_error
-        )
+            # Keep callbacks alive
+            self.vosk_model_callback = (
+                VoskModelCallback(self)
+            )
 
-    except Exception as e:
+            self.vosk_model_error_callback = (
+                VoskModelErrorCallback(self)
+            )
 
-        self.output.text = (
-            "VOSK LOAD ERROR:\n"
-            + str(e)
-        )
+            StorageService.unpack(
+                PythonActivity.mActivity,
+                "model",
+                "model",
+                self.vosk_model_callback,
+                self.vosk_model_error_callback
+            )
+
+        except Exception as e:
+
+            self.output.text = (
+                "VOSK LOAD ERROR:\n"
+                + str(e)
+            )
+
+    # =====================================================
+    # VOSK MODEL SUCCESS
+    # =====================================================
 
     def on_vosk_model_loaded(self, model):
 
-    self.vosk_model = model
+        self.vosk_model = model
 
-    self.output.text = (
-        "Vosk model loaded successfully.\n"
-        "Press VOICE."
-    )
+        self.output.text = (
+            "Vosk model loaded successfully.\n"
+            "Press VOICE."
+        )
 
+    # =====================================================
+    # VOSK MODEL ERROR
+    # =====================================================
 
-def on_vosk_model_error(self, exception):
+    def on_vosk_model_error(self, exception):
 
-    self.output.text = (
-        "VOSK MODEL ERROR:\n"
-        + str(exception)
-    )
+        self.vosk_model = None
 
-    # =========================
+        self.output.text = (
+            "VOSK MODEL ERROR:\n"
+            + str(exception)
+        )
+
+    # =====================================================
     # INFORMATION CARD
-    # =========================
+    # =====================================================
 
     def make_info_card(self, title, status):
 
@@ -410,9 +520,9 @@ def on_vosk_model_error(self, exception):
 
         return card
 
-    # =========================
+    # =====================================================
     # QUICK BUTTON
-    # =========================
+    # =====================================================
 
     def quick_button(self, text):
 
@@ -431,9 +541,9 @@ def on_vosk_model_error(self, exception):
 
         return button
 
-    # =========================
+    # =====================================================
     # QUICK COMMAND
-    # =========================
+    # =====================================================
 
     def quick_command(self, command):
 
@@ -445,11 +555,12 @@ def on_vosk_model_error(self, exception):
         }
 
         self.input_box.text = commands[command]
+
         self.send_command(None)
 
-    # =========================
+    # =====================================================
     # SEND COMMAND
-    # =========================
+    # =====================================================
 
     def send_command(self, instance):
 
@@ -477,21 +588,23 @@ def on_vosk_model_error(self, exception):
                 return
 
         self.output.text = response
+
         self.input_box.text = ""
 
-    # =========================
-    # VOSK VOICE INPUT
-    # =========================
+    # =====================================================
+    # START VOSK VOICE
+    # =====================================================
 
     def start_voice(self, instance):
 
-        # Stop if already listening
+        # If already listening, stop it
         if self.vosk_speech_service is not None:
 
             self.stop_voice()
 
             return
 
+        # Model must be loaded first
         if self.vosk_model is None:
 
             self.output.text = (
@@ -500,6 +613,7 @@ def on_vosk_model_error(self, exception):
 
             return
 
+        # Request microphone permission
         try:
 
             from android.permissions import (
@@ -512,7 +626,6 @@ def on_vosk_model_error(self, exception):
             ])
 
         except Exception:
-
             pass
 
         try:
@@ -527,10 +640,6 @@ def on_vosk_model_error(self, exception):
                 "org.vosk.android.SpeechService"
             )
 
-            RecognitionListener = autoclass(
-                "org.vosk.android.RecognitionListener"
-            )
-
             self.vosk_recognizer = Recognizer(
                 self.vosk_model,
                 16000.0
@@ -541,23 +650,9 @@ def on_vosk_model_error(self, exception):
                 16000.0
             )
 
-            self.vosk_listener = RecognitionListener.implement(
-                {
-                    "onPartialResult":
-                        self.on_vosk_partial,
-
-                    "onResult":
-                        self.on_vosk_result,
-
-                    "onFinalResult":
-                        self.on_vosk_final,
-
-                    "onError":
-                        self.on_vosk_error,
-
-                    "onTimeout":
-                        self.on_vosk_timeout
-                }
+            # Proper PyJNIus Java interface implementation
+            self.vosk_listener = (
+                VoskRecognitionListener(self)
             )
 
             self.output.text = (
@@ -577,9 +672,9 @@ def on_vosk_model_error(self, exception):
 
             self.cleanup_vosk()
 
-    # =========================
-    # VOSK CALLBACKS
-    # =========================
+    # =====================================================
+    # VOSK PARTIAL RESULT
+    # =====================================================
 
     def on_vosk_partial(self, hypothesis):
 
@@ -592,6 +687,10 @@ def on_vosk_model_error(self, exception):
 
         except Exception:
             pass
+
+    # =====================================================
+    # VOSK RESULT
+    # =====================================================
 
     def on_vosk_result(self, hypothesis):
 
@@ -614,6 +713,10 @@ def on_vosk_model_error(self, exception):
 
         except Exception:
             pass
+
+    # =====================================================
+    # VOSK FINAL RESULT
+    # =====================================================
 
     def on_vosk_final(self, hypothesis):
 
@@ -653,6 +756,10 @@ def on_vosk_model_error(self, exception):
                 + str(e)
             )
 
+    # =====================================================
+    # VOSK ERROR
+    # =====================================================
+
     def on_vosk_error(self, error):
 
         self.output.text = (
@@ -662,6 +769,10 @@ def on_vosk_model_error(self, exception):
 
         self.cleanup_vosk()
 
+    # =====================================================
+    # VOSK TIMEOUT
+    # =====================================================
+
     def on_vosk_timeout(self):
 
         self.cleanup_vosk()
@@ -670,9 +781,9 @@ def on_vosk_model_error(self, exception):
             "Listening stopped."
         )
 
-    # =========================
-    # STOP VOSK
-    # =========================
+    # =====================================================
+    # STOP VOICE
+    # =====================================================
 
     def stop_voice(self):
 
@@ -683,7 +794,6 @@ def on_vosk_model_error(self, exception):
                 self.vosk_speech_service.stop()
 
         except Exception:
-
             pass
 
         self.cleanup_vosk()
@@ -691,6 +801,10 @@ def on_vosk_model_error(self, exception):
         self.output.text = (
             "Voice stopped."
         )
+
+    # =====================================================
+    # CLEANUP VOSK
+    # =====================================================
 
     def cleanup_vosk(self):
 
@@ -701,15 +815,14 @@ def on_vosk_model_error(self, exception):
                 self.vosk_speech_service.shutdown()
 
         except Exception:
-
             pass
 
         self.vosk_speech_service = None
         self.vosk_recognizer = None
 
-    # =========================
-    # APP LAUNCHER
-    # =========================
+    # =====================================================
+    # ANDROID APP LAUNCHER
+    # =====================================================
 
     def open_android_app(self, app_name):
 
@@ -778,22 +891,27 @@ def on_vosk_model_error(self, exception):
                 "Opening " + app_name + "..."
             )
 
-        except Exception:
+        except Exception as e:
 
             self.output.text = (
                 app_name +
-                " could not be opened."
+                " could not be opened.\n"
+                + str(e)
             )
 
         self.input_box.text = ""
 
-    # =========================
+    # =====================================================
     # APP SHUTDOWN
-    # =========================
+    # =====================================================
 
     def on_stop(self):
 
         self.cleanup_vosk()
 
+
+# =========================================================
+# RUN APP
+# =========================================================
 
 MyAIApp().run()
