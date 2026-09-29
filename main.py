@@ -1,4 +1,9 @@
-__version__ = "0.4.1"
+__version__ = "0.5.0"
+
+import os
+import json
+import shutil
+import threading
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -12,85 +17,10 @@ from kivy.clock import Clock
 
 from ai_brain import AIBrain
 
-# =========================================================
-# VOSK / PYJNIUS CALLBACK CLASSES
-# =========================================================
 
-try:
-    from jnius import PythonJavaClass, java_method
-except Exception:
-    PythonJavaClass = object
-
-    def java_method(*args, **kwargs):
-        def decorator(function):
-            return function
-        return decorator
-
-
-class VoskModelCallback(PythonJavaClass):
-
-    __javainterfaces__ = [
-        "org/vosk/android/StorageService$Callback"
-    ]
-
-    def __init__(self, app):
-        super().__init__()
-        self.app = app
-
-    @java_method("(Ljava/lang/Object;)V")
-    def onComplete(self, result):
-        self.app.on_vosk_model_loaded(result)
-
-
-class VoskModelErrorCallback(PythonJavaClass):
-
-    __javainterfaces__ = [
-        "org/vosk/android/StorageService$Callback"
-    ]
-
-    def __init__(self, app):
-        super().__init__()
-        self.app = app
-
-    @java_method("(Ljava/lang/Object;)V")
-    def onComplete(self, error):
-        self.app.on_vosk_model_error(error)
-
-
-class VoskRecognitionListener(PythonJavaClass):
-
-    __javainterfaces__ = [
-        "org/vosk/android/RecognitionListener"
-    ]
-
-    def __init__(self, app):
-        super().__init__()
-        self.app = app
-
-    @java_method("(Ljava/lang/String;)V")
-    def onPartialResult(self, hypothesis):
-        self.app.on_vosk_partial(hypothesis)
-
-    @java_method("(Ljava/lang/String;)V")
-    def onResult(self, hypothesis):
-        self.app.on_vosk_result(hypothesis)
-
-    @java_method("(Ljava/lang/String;)V")
-    def onFinalResult(self, hypothesis):
-        self.app.on_vosk_final(hypothesis)
-
-    @java_method("(Ljava/lang/Exception;)V")
-    def onError(self, exception):
-        self.app.on_vosk_error(exception)
-
-    @java_method("()V")
-    def onTimeout(self):
-        self.app.on_vosk_timeout()
-
-
-# =========================================================
-# CARD
-# =========================================================
+# ============================================================
+# JARVIS UI CARD
+# ============================================================
 
 class Card(BoxLayout):
 
@@ -116,25 +46,36 @@ class Card(BoxLayout):
         self.bg.size = self.size
 
 
-# =========================================================
+# ============================================================
 # MAIN APP
-# =========================================================
+# ============================================================
 
 class MyAIApp(App):
 
     def build(self):
 
+        # ----------------------------------------------------
+        # AI BRAIN
+        # ----------------------------------------------------
+
         self.brain = AIBrain()
 
-        # Vosk objects
+        # ----------------------------------------------------
+        # VOSK
+        # ----------------------------------------------------
+
         self.vosk_model = None
         self.vosk_recognizer = None
-        self.vosk_speech_service = None
 
-        # Keep Java callback objects alive
-        self.vosk_model_callback = None
-        self.vosk_model_error_callback = None
-        self.vosk_listener = None
+        self.audio_record = None
+        self.voice_thread = None
+        self.voice_running = False
+
+        self.model_path = None
+
+        # ----------------------------------------------------
+        # ROOT
+        # ----------------------------------------------------
 
         root = BoxLayout(
             orientation="vertical",
@@ -158,9 +99,9 @@ class MyAIApp(App):
             setattr(self.background, "size", value)
         )
 
-        # =================================================
+        # ====================================================
         # HEADER
-        # =================================================
+        # ====================================================
 
         header = BoxLayout(
             orientation="vertical",
@@ -187,9 +128,9 @@ class MyAIApp(App):
 
         root.add_widget(header)
 
-        # =================================================
+        # ====================================================
         # SYSTEM STATUS
-        # =================================================
+        # ====================================================
 
         status = Card(
             orientation="horizontal",
@@ -216,9 +157,9 @@ class MyAIApp(App):
 
         root.add_widget(status)
 
-        # =================================================
+        # ====================================================
         # AI CORE
-        # =================================================
+        # ====================================================
 
         core = Card(
             orientation="vertical",
@@ -253,9 +194,9 @@ class MyAIApp(App):
 
         root.add_widget(core)
 
-        # =================================================
-        # INFORMATION
-        # =================================================
+        # ====================================================
+        # INFO CARDS
+        # ====================================================
 
         info = GridLayout(
             cols=2,
@@ -280,9 +221,9 @@ class MyAIApp(App):
 
         root.add_widget(info)
 
-        # =================================================
-        # RESPONSE
-        # =================================================
+        # ====================================================
+        # RESPONSE PANEL
+        # ====================================================
 
         response_card = Card(
             orientation="vertical",
@@ -290,7 +231,7 @@ class MyAIApp(App):
         )
 
         self.output = Label(
-            text="Welcome, operator.\nLoading offline voice...",
+            text="Welcome, operator.\nPreparing offline voice...",
             font_size=dp(17),
             halign="center",
             valign="middle",
@@ -306,9 +247,9 @@ class MyAIApp(App):
 
         root.add_widget(response_card)
 
-        # =================================================
+        # ====================================================
         # QUICK COMMANDS
-        # =================================================
+        # ====================================================
 
         root.add_widget(
             Label(
@@ -345,9 +286,9 @@ class MyAIApp(App):
 
         root.add_widget(commands)
 
-        # =================================================
+        # ====================================================
         # COMMAND INPUT
-        # =================================================
+        # ====================================================
 
         self.input_box = TextInput(
             hint_text="Enter command...",
@@ -366,9 +307,9 @@ class MyAIApp(App):
 
         root.add_widget(self.input_box)
 
-        # =================================================
+        # ====================================================
         # BUTTONS
-        # =================================================
+        # ====================================================
 
         buttons = GridLayout(
             cols=2,
@@ -408,9 +349,9 @@ class MyAIApp(App):
 
         root.add_widget(buttons)
 
-        # =================================================
-        # LOAD VOSK AFTER UI
-        # =================================================
+        # ====================================================
+        # LOAD VOSK
+        # ====================================================
 
         Clock.schedule_once(
             lambda dt: self.load_vosk_model(),
@@ -419,83 +360,684 @@ class MyAIApp(App):
 
         return root
 
-    # =====================================================
+    # ========================================================
     # VOSK MODEL LOADING
-    # =====================================================
+    # ========================================================
 
     def load_vosk_model(self):
+
+        self.output.text = (
+            "Preparing Vosk model...\n"
+            "Please wait."
+        )
+
+        threading.Thread(
+            target=self.prepare_vosk_model,
+            daemon=True
+        ).start()
+
+    def prepare_vosk_model(self):
 
         try:
 
             from jnius import autoclass
 
-            StorageService = autoclass(
-                "org.vosk.android.StorageService"
-            )
+            # ------------------------------------------------
+            # Android activity
+            # ------------------------------------------------
 
             PythonActivity = autoclass(
                 "org.kivy.android.PythonActivity"
             )
 
-            self.output.text = (
-                "Loading Vosk model..."
+            activity = PythonActivity.mActivity
+
+            # ------------------------------------------------
+            # Android asset manager
+            # ------------------------------------------------
+
+            asset_manager = activity.getAssets()
+
+            # ------------------------------------------------
+            # Internal application storage
+            # ------------------------------------------------
+
+            files_dir = activity.getFilesDir()
+
+            files_path = str(
+                files_dir.getAbsolutePath()
             )
 
-            # Keep callbacks alive
-            self.vosk_model_callback = (
-                VoskModelCallback(self)
+            model_destination = os.path.join(
+                files_path,
+                "vosk-model-small-en-in-0.4"
             )
 
-            self.vosk_model_error_callback = (
-                VoskModelErrorCallback(self)
+            # ------------------------------------------------
+            # Copy model from APK assets
+            # ------------------------------------------------
+
+            Clock.schedule_once(
+                lambda dt:
+                self.set_output(
+                    "Copying Vosk model...\n"
+                    "First launch may take a little time."
+                )
             )
 
-            StorageService.unpack(
-                PythonActivity.mActivity,
+            self.copy_asset_folder(
+                asset_manager,
                 "model",
-                "model",
-                self.vosk_model_callback,
-                self.vosk_model_error_callback
+                model_destination
+            )
+
+            # ------------------------------------------------
+            # Load Vosk Model
+            # ------------------------------------------------
+
+            Model = autoclass(
+                "org.vosk.Model"
+            )
+
+            model = Model(
+                model_destination
+            )
+
+            self.vosk_model = model
+            self.model_path = model_destination
+
+            Clock.schedule_once(
+                lambda dt:
+                self.set_output(
+                    "Vosk model loaded successfully.\n"
+                    "Press VOICE."
+                )
             )
 
         except Exception as e:
 
+            error_text = str(e)
+
+            Clock.schedule_once(
+                lambda dt:
+                self.set_output(
+                    "VOSK LOAD ERROR:\n"
+                    + error_text
+                )
+            )
+
+    # ========================================================
+    # COPY APK ASSET DIRECTORY
+    # ========================================================
+
+    def copy_asset_folder(
+        self,
+        asset_manager,
+        asset_folder,
+        destination
+    ):
+
+        if not os.path.exists(destination):
+            os.makedirs(destination)
+
+        children = asset_manager.list(
+            asset_folder
+        )
+
+        # ----------------------------------------------------
+        # Directory
+        # ----------------------------------------------------
+
+        if children and len(children) > 0:
+
+            for child in children:
+
+                source_child = (
+                    asset_folder
+                    + "/"
+                    + str(child)
+                )
+
+                destination_child = os.path.join(
+                    destination,
+                    str(child)
+                )
+
+                self.copy_asset_folder(
+                    asset_manager,
+                    source_child,
+                    destination_child
+                )
+
+            return
+
+        # ----------------------------------------------------
+        # File
+        # ----------------------------------------------------
+
+        self.copy_asset_file(
+            asset_manager,
+            asset_folder,
+            destination
+        )
+
+    # ========================================================
+    # COPY SINGLE ASSET FILE
+    # ========================================================
+
+    def copy_asset_file(
+        self,
+        asset_manager,
+        asset_path,
+        destination_path
+    ):
+
+        from jnius import autoclass
+
+        FileOutputStream = autoclass(
+            "java.io.FileOutputStream"
+        )
+
+        input_stream = None
+        output_stream = None
+
+        try:
+
+            input_stream = asset_manager.open(
+                asset_path
+            )
+
+            output_stream = FileOutputStream(
+                destination_path
+            )
+
+            # 8 KB buffer
+            buffer = bytearray(8192)
+
+            while True:
+
+                count = input_stream.read(
+                    buffer,
+                    0,
+                    len(buffer)
+                )
+
+                if count <= 0:
+                    break
+
+                output_stream.write(
+                    buffer,
+                    0,
+                    count
+                )
+
+        finally:
+
+            try:
+                if input_stream is not None:
+                    input_stream.close()
+            except Exception:
+                pass
+
+            try:
+                if output_stream is not None:
+                    output_stream.close()
+            except Exception:
+                pass
+
+    # ========================================================
+    # VOICE START
+    # ========================================================
+
+    def start_voice(self, instance):
+
+        if self.voice_running:
+
+            self.stop_voice()
+
+            return
+
+        if self.vosk_model is None:
+
             self.output.text = (
-                "VOSK LOAD ERROR:\n"
+                "Vosk model is not ready yet."
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Request microphone permission
+        # ----------------------------------------------------
+
+        try:
+
+            from android.permissions import (
+                request_permissions,
+                Permission
+            )
+
+            request_permissions(
+                [Permission.RECORD_AUDIO]
+            )
+
+        except Exception:
+            pass
+
+        # ----------------------------------------------------
+        # Start microphone
+        # ----------------------------------------------------
+
+        try:
+
+            from jnius import autoclass
+
+            AudioRecord = autoclass(
+                "android.media.AudioRecord"
+            )
+
+            AudioSource = autoclass(
+                "android.media.MediaRecorder$AudioSource"
+            )
+
+            AudioFormat = autoclass(
+                "android.media.AudioFormat"
+            )
+
+            # ------------------------------------------------
+            # Audio settings
+            # ------------------------------------------------
+
+            sample_rate = 16000
+
+            channel_config = (
+                AudioFormat.CHANNEL_IN_MONO
+            )
+
+            audio_format = (
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+
+            # ------------------------------------------------
+            # Buffer
+            # ------------------------------------------------
+
+            min_buffer = AudioRecord.getMinBufferSize(
+                sample_rate,
+                channel_config,
+                audio_format
+            )
+
+            if min_buffer <= 0:
+                min_buffer = 8192
+
+            buffer_size = max(
+                min_buffer,
+                8192
+            )
+
+            # ------------------------------------------------
+            # Create AudioRecord
+            # ------------------------------------------------
+
+            self.audio_record = AudioRecord(
+                AudioSource.VOICE_RECOGNITION,
+                sample_rate,
+                channel_config,
+                audio_format,
+                buffer_size * 2
+            )
+
+            # ------------------------------------------------
+            # Check recorder
+            # ------------------------------------------------
+
+            state = self.audio_record.getState()
+
+            if state != AudioRecord.STATE_INITIALIZED:
+
+                self.audio_record.release()
+
+                self.audio_record = None
+
+                self.output.text = (
+                    "Microphone could not be initialized."
+                )
+
+                return
+
+            # ------------------------------------------------
+            # Create recognizer
+            # ------------------------------------------------
+
+            from jnius import autoclass
+
+            Recognizer = autoclass(
+                "org.vosk.Recognizer"
+            )
+
+            self.vosk_recognizer = Recognizer(
+                self.vosk_model,
+                16000.0
+            )
+
+            # ------------------------------------------------
+            # Start recording
+            # ------------------------------------------------
+
+            self.audio_record.startRecording()
+
+            self.voice_running = True
+
+            self.output.text = (
+                "🎙 Listening offline...\n"
+                "Speak now."
+            )
+
+            # ------------------------------------------------
+            # Start Python voice thread
+            # ------------------------------------------------
+
+            self.voice_thread = threading.Thread(
+                target=self.voice_loop,
+                daemon=True
+            )
+
+            self.voice_thread.start()
+
+        except Exception as e:
+
+            self.output.text = (
+                "VOICE START ERROR:\n"
                 + str(e)
             )
 
-    # =====================================================
-    # VOSK MODEL SUCCESS
-    # =====================================================
+            self.cleanup_voice()
 
-    def on_vosk_model_loaded(self, model):
+    # ========================================================
+    # VOICE LOOP
+    # ========================================================
 
-        self.vosk_model = model
+    def voice_loop(self):
+
+        try:
+
+            # ------------------------------------------------
+            # Java byte array
+            # ------------------------------------------------
+
+            from jnius import jarray
+
+            buffer_size = 8192
+
+            audio_buffer = jarray(
+                "b",
+                buffer_size
+            )
+
+            while self.voice_running:
+
+                if self.audio_record is None:
+                    break
+
+                # ------------------------------------------------
+                # Read microphone
+                # ------------------------------------------------
+
+                count = self.audio_record.read(
+                    audio_buffer,
+                    0,
+                    buffer_size
+                )
+
+                if count <= 0:
+                    continue
+
+                # ------------------------------------------------
+                # Send PCM to Vosk
+                # ------------------------------------------------
+
+                accepted = (
+                    self.vosk_recognizer.acceptWaveForm(
+                        audio_buffer,
+                        count
+                    )
+                )
+
+                # ------------------------------------------------
+                # Speech result
+                # ------------------------------------------------
+
+                if accepted:
+
+                    result = str(
+                        self.vosk_recognizer.getResult()
+                    )
+
+                    Clock.schedule_once(
+                        lambda dt,
+                        r=result:
+                        self.process_vosk_result(r)
+                    )
+
+                else:
+
+                    partial = str(
+                        self.vosk_recognizer.getPartialResult()
+                    )
+
+                    Clock.schedule_once(
+                        lambda dt,
+                        p=partial:
+                        self.show_partial_result(p)
+                    )
+
+            # ------------------------------------------------
+            # Final result
+            # ------------------------------------------------
+
+            if self.vosk_recognizer is not None:
+
+                final_result = str(
+                    self.vosk_recognizer.getFinalResult()
+                )
+
+                Clock.schedule_once(
+                    lambda dt,
+                    r=final_result:
+                    self.process_final_result(r)
+                )
+
+        except Exception as e:
+
+            error_text = str(e)
+
+            Clock.schedule_once(
+                lambda dt:
+                self.voice_error(error_text)
+            )
+
+    # ========================================================
+    # PARTIAL RESULT
+    # ========================================================
+
+    def show_partial_result(self, result):
+
+        try:
+
+            data = json.loads(
+                result
+            )
+
+            text = data.get(
+                "partial",
+                ""
+            ).strip()
+
+            if text:
+
+                self.output.text = (
+                    "🎙 Listening...\n"
+                    + text
+                )
+
+        except Exception:
+            pass
+
+    # ========================================================
+    # NORMAL RESULT
+    # ========================================================
+
+    def process_vosk_result(self, result):
+
+        try:
+
+            data = json.loads(
+                result
+            )
+
+            text = data.get(
+                "text",
+                ""
+            ).strip()
+
+            if text:
+
+                self.output.text = (
+                    "You said:\n"
+                    + text
+                )
+
+                self.input_box.text = text
+
+        except Exception:
+            pass
+
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
+
+    def process_final_result(self, result):
+
+        try:
+
+            data = json.loads(
+                result
+            )
+
+            text = data.get(
+                "text",
+                ""
+            ).strip()
+
+            self.cleanup_voice()
+
+            if text:
+
+                self.input_box.text = text
+
+                self.send_command(
+                    None
+                )
+
+            else:
+
+                self.output.text = (
+                    "I couldn't understand you."
+                )
+
+        except Exception as e:
+
+            self.cleanup_voice()
+
+            self.output.text = (
+                "Voice processing error:\n"
+                + str(e)
+            )
+
+    # ========================================================
+    # VOICE ERROR
+    # ========================================================
+
+    def voice_error(self, error):
+
+        self.cleanup_voice()
 
         self.output.text = (
-            "Vosk model loaded successfully.\n"
-            "Press VOICE."
+            "Vosk microphone error:\n"
+            + error
         )
 
-    # =====================================================
-    # VOSK MODEL ERROR
-    # =====================================================
+    # ========================================================
+    # STOP VOICE
+    # ========================================================
 
-    def on_vosk_model_error(self, exception):
+    def stop_voice(self):
 
-        self.vosk_model = None
+        self.voice_running = False
+
+        try:
+
+            if self.audio_record is not None:
+
+                self.audio_record.stop()
+
+        except Exception:
+            pass
+
+        self.cleanup_voice()
 
         self.output.text = (
-            "VOSK MODEL ERROR:\n"
-            + str(exception)
+            "Voice stopped."
         )
 
-    # =====================================================
-    # INFORMATION CARD
-    # =====================================================
+    # ========================================================
+    # CLEANUP VOICE
+    # ========================================================
 
-    def make_info_card(self, title, status):
+    def cleanup_voice(self):
+
+        self.voice_running = False
+
+        try:
+
+            if self.audio_record is not None:
+
+                try:
+                    self.audio_record.stop()
+                except Exception:
+                    pass
+
+                try:
+                    self.audio_record.release()
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+        self.audio_record = None
+
+        self.vosk_recognizer = None
+
+        self.voice_thread = None
+
+    # ========================================================
+    # UI OUTPUT
+    # ========================================================
+
+    def set_output(self, text):
+
+        self.output.text = text
+
+    # ========================================================
+    # INFO CARD
+    # ========================================================
+
+    def make_info_card(
+        self,
+        title,
+        status
+    ):
 
         card = Card(
             orientation="vertical",
@@ -520,9 +1062,9 @@ class MyAIApp(App):
 
         return card
 
-    # =====================================================
+    # ========================================================
     # QUICK BUTTON
-    # =====================================================
+    # ========================================================
 
     def quick_button(self, text):
 
@@ -541,9 +1083,9 @@ class MyAIApp(App):
 
         return button
 
-    # =====================================================
+    # ========================================================
     # QUICK COMMAND
-    # =====================================================
+    # ========================================================
 
     def quick_command(self, command):
 
@@ -554,13 +1096,17 @@ class MyAIApp(App):
             "SYSTEM": "hello"
         }
 
-        self.input_box.text = commands[command]
+        self.input_box.text = commands[
+            command
+        ]
 
-        self.send_command(None)
+        self.send_command(
+            None
+        )
 
-    # =====================================================
+    # ========================================================
     # SEND COMMAND
-    # =====================================================
+    # ========================================================
 
     def send_command(self, instance):
 
@@ -569,9 +1115,13 @@ class MyAIApp(App):
         if not command:
             return
 
-        response = self.brain.think(command)
+        response = self.brain.think(
+            command
+        )
 
-        if response.startswith("EXECUTE:"):
+        if response.startswith(
+            "EXECUTE:"
+        ):
 
             action = response.replace(
                 "EXECUTE:",
@@ -579,11 +1129,17 @@ class MyAIApp(App):
                 1
             ).strip()
 
-            if action.startswith("open "):
+            if action.startswith(
+                "open "
+            ):
 
-                app_name = action[5:].strip()
+                app_name = action[
+                    5:
+                ].strip()
 
-                self.open_android_app(app_name)
+                self.open_android_app(
+                    app_name
+                )
 
                 return
 
@@ -591,243 +1147,19 @@ class MyAIApp(App):
 
         self.input_box.text = ""
 
-    # =====================================================
-    # START VOSK VOICE
-    # =====================================================
+    # ========================================================
+    # OPEN ANDROID APP
+    # ========================================================
 
-    def start_voice(self, instance):
-
-        # If already listening, stop it
-        if self.vosk_speech_service is not None:
-
-            self.stop_voice()
-
-            return
-
-        # Model must be loaded first
-        if self.vosk_model is None:
-
-            self.output.text = (
-                "Vosk model is not ready yet."
-            )
-
-            return
-
-        # Request microphone permission
-        try:
-
-            from android.permissions import (
-                request_permissions,
-                Permission
-            )
-
-            request_permissions([
-                Permission.RECORD_AUDIO
-            ])
-
-        except Exception:
-            pass
-
-        try:
-
-            from jnius import autoclass
-
-            Recognizer = autoclass(
-                "org.vosk.Recognizer"
-            )
-
-            SpeechService = autoclass(
-                "org.vosk.android.SpeechService"
-            )
-
-            self.vosk_recognizer = Recognizer(
-                self.vosk_model,
-                16000.0
-            )
-
-            self.vosk_speech_service = SpeechService(
-                self.vosk_recognizer,
-                16000.0
-            )
-
-            # Proper PyJNIus Java interface implementation
-            self.vosk_listener = (
-                VoskRecognitionListener(self)
-            )
-
-            self.output.text = (
-                "Listening offline..."
-            )
-
-            self.vosk_speech_service.startListening(
-                self.vosk_listener
-            )
-
-        except Exception as e:
-
-            self.output.text = (
-                "Vosk voice failed:\n"
-                + str(e)
-            )
-
-            self.cleanup_vosk()
-
-    # =====================================================
-    # VOSK PARTIAL RESULT
-    # =====================================================
-
-    def on_vosk_partial(self, hypothesis):
-
-        try:
-
-            self.output.text = (
-                "Listening...\n"
-                + str(hypothesis)
-            )
-
-        except Exception:
-            pass
-
-    # =====================================================
-    # VOSK RESULT
-    # =====================================================
-
-    def on_vosk_result(self, hypothesis):
-
-        try:
-
-            import json
-
-            data = json.loads(
-                str(hypothesis)
-            )
-
-            text = data.get(
-                "text",
-                ""
-            ).strip()
-
-            if text:
-
-                self.input_box.text = text
-
-        except Exception:
-            pass
-
-    # =====================================================
-    # VOSK FINAL RESULT
-    # =====================================================
-
-    def on_vosk_final(self, hypothesis):
-
-        try:
-
-            import json
-
-            data = json.loads(
-                str(hypothesis)
-            )
-
-            text = data.get(
-                "text",
-                ""
-            ).strip()
-
-            self.cleanup_vosk()
-
-            if text:
-
-                self.input_box.text = text
-
-                self.send_command(None)
-
-            else:
-
-                self.output.text = (
-                    "I couldn't understand you."
-                )
-
-        except Exception as e:
-
-            self.cleanup_vosk()
-
-            self.output.text = (
-                "Voice processing error:\n"
-                + str(e)
-            )
-
-    # =====================================================
-    # VOSK ERROR
-    # =====================================================
-
-    def on_vosk_error(self, error):
+    def open_android_app(
+        self,
+        app_name
+    ):
 
         self.output.text = (
-            "Vosk microphone error:\n"
-            + str(error)
-        )
-
-        self.cleanup_vosk()
-
-    # =====================================================
-    # VOSK TIMEOUT
-    # =====================================================
-
-    def on_vosk_timeout(self):
-
-        self.cleanup_vosk()
-
-        self.output.text = (
-            "Listening stopped."
-        )
-
-    # =====================================================
-    # STOP VOICE
-    # =====================================================
-
-    def stop_voice(self):
-
-        try:
-
-            if self.vosk_speech_service is not None:
-
-                self.vosk_speech_service.stop()
-
-        except Exception:
-            pass
-
-        self.cleanup_vosk()
-
-        self.output.text = (
-            "Voice stopped."
-        )
-
-    # =====================================================
-    # CLEANUP VOSK
-    # =====================================================
-
-    def cleanup_vosk(self):
-
-        try:
-
-            if self.vosk_speech_service is not None:
-
-                self.vosk_speech_service.shutdown()
-
-        except Exception:
-            pass
-
-        self.vosk_speech_service = None
-        self.vosk_recognizer = None
-
-    # =====================================================
-    # ANDROID APP LAUNCHER
-    # =====================================================
-
-    def open_android_app(self, app_name):
-
-        self.output.text = (
-            "Opening " + app_name + "..."
+            "Opening "
+            + app_name
+            + "..."
         )
 
         try:
@@ -843,6 +1175,7 @@ class MyAIApp(App):
             )
 
             apps = {
+
                 "youtube":
                     "com.google.android.youtube",
 
@@ -871,7 +1204,9 @@ class MyAIApp(App):
 
                 return
 
-            activity = PythonActivity.mActivity
+            activity = (
+                PythonActivity.mActivity
+            )
 
             intent = Intent(
                 Intent.ACTION_MAIN
@@ -885,33 +1220,37 @@ class MyAIApp(App):
                 package_name
             )
 
-            activity.startActivity(intent)
+            activity.startActivity(
+                intent
+            )
 
             self.output.text = (
-                "Opening " + app_name + "..."
+                "Opening "
+                + app_name
+                + "..."
             )
 
         except Exception as e:
 
             self.output.text = (
-                app_name +
-                " could not be opened.\n"
+                app_name
+                + " could not be opened.\n"
                 + str(e)
             )
 
         self.input_box.text = ""
 
-    # =====================================================
-    # APP SHUTDOWN
-    # =====================================================
+    # ========================================================
+    # APP STOP
+    # ========================================================
 
     def on_stop(self):
 
-        self.cleanup_vosk()
+        self.cleanup_voice()
 
 
-# =========================================================
-# RUN APP
-# =========================================================
+# ============================================================
+# START
+# ============================================================
 
 MyAIApp().run()
