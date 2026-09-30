@@ -471,17 +471,102 @@ class MyAIApp(App):
     # ========================================================
 
     def copy_asset_folder(
-        self,
-        asset_manager,
-        asset_folder,
-        destination
-    ):
+    self,
+    asset_manager,
+    asset_path,
+    destination_path
+):
 
-        if not os.path.exists(destination):
-            os.makedirs(destination)
+    # First try to open it as a FILE
+    try:
 
-        children = asset_manager.list(
-            asset_folder
+        input_stream = asset_manager.open(
+            asset_path
+        )
+
+        parent = os.path.dirname(
+            destination_path
+        )
+
+        if parent and not os.path.exists(parent):
+            os.makedirs(parent)
+
+        from jnius import autoclass
+
+        FileOutputStream = autoclass(
+            "java.io.FileOutputStream"
+        )
+
+        output_stream = FileOutputStream(
+            destination_path
+        )
+
+        try:
+
+            buffer = bytearray(8192)
+
+            while True:
+
+                count = input_stream.read(
+                    buffer,
+                    0,
+                    len(buffer)
+                )
+
+                if count <= 0:
+                    break
+
+                output_stream.write(
+                    buffer,
+                    0,
+                    count
+                )
+
+        finally:
+
+            try:
+                input_stream.close()
+            except Exception:
+                pass
+
+            try:
+                output_stream.close()
+            except Exception:
+                pass
+
+        return
+
+    except Exception:
+        pass
+
+    # If it wasn't a file, treat it as a directory
+
+    if not os.path.exists(destination_path):
+        os.makedirs(destination_path)
+
+    children = asset_manager.list(
+        asset_path
+    )
+
+    for child in children:
+
+        child = str(child)
+
+        source_child = (
+            asset_path
+            + "/"
+            + child
+        )
+
+        destination_child = os.path.join(
+            destination_path,
+            child
+        )
+
+        self.copy_asset_folder(
+            asset_manager,
+            source_child,
+            destination_child
         )
 
         # ----------------------------------------------------
